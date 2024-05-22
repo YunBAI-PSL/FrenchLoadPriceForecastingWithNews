@@ -3,7 +3,7 @@
 # The job partition (maximum elapsed time of the job).
 
 #SBATCH --time=3-00:00:00
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=48
 #SBATCH --mem=64G
 
 # The name of the job.
@@ -61,3 +61,6 @@ python -u benchmark_models.py
 # pip install matplotlib
 # pip install -U statsmodels
 # conda install -c conda-forge matplotlib optuna pandas scikit-learn statsmodels -y
+
+# 实时更新node状态
+# watch -n 1 check-cluster

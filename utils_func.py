@@ -195,14 +195,14 @@ def lgbObjective(X_train,Y_train,trial):
 
     # save mse for each fold
     mse_scores = []
-    model = MultiOutputRegressor(lgb.LGBMRegressor(**params))
     try:
         for train_index, test_index in tscv.split(X_train):
             print(train_index)
             X_train_fold, X_test_fold = X_train.iloc[train_index], X_train.iloc[test_index]
             y_train_fold, y_test_fold = Y_train.iloc[train_index], Y_train.iloc[test_index]
             
-            model.fit(X_train_fold, y_train_fold)
+            model = MultiOutputRegressor(lgb.LGBMRegressor(**params))
+            model.fit(X_train_fold,y_train_fold)
             preds = model.predict(X_test_fold)
             mse = mean_squared_error(y_test_fold, preds)
             mse_scores.append(mse)
@@ -224,7 +224,8 @@ def trainLGB(res_dict):
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
 
-    study = optuna.create_study(direction='minimize',sampler=optuna.samplers.TPESampler(seed=42))
+    study = optuna.create_study(direction='minimize',sampler=optuna.samplers.TPESampler(seed=42),
+                                pruner=optuna.pruners.MedianPruner())
     study.optimize(lambda trial: lgbObjective(X_train,Y_train,trial), 
                    n_trials=100,
                    n_jobs=-1,
@@ -250,22 +251,23 @@ def mlpObjective(X_train,Y_train,trial):
 
     params = {
         'hidden_layer_sizes': trial.suggest_categorical('hidden_layer_sizes', [(50,), (100,), (50, 50), (100, 100)]),
-        'activation': trial.suggest_categorical('activation', ['tanh', 'relu']),
+        'activation': trial.suggest_categorical('activation', ['relu']),
         'solver': trial.suggest_categorical('solver', ['adam']),
-        'alpha': trial.suggest_loguniform('alpha', 1e-4, 1e-1),
-        'learning_rate_init': trial.suggest_loguniform('learning_rate_init', 1e-4, 1e-1),
-        'max_iter': 500  # set higher iter times
+        'alpha': trial.suggest_loguniform('alpha', 1e-5, 1e-2),
+        'learning_rate_init': trial.suggest_loguniform('learning_rate_init', 1e-5, 1e-2),
+        'max_iter': 200  # set higher iter times
     }
 
     # save mse for each fold
     mse_scores = []
-    model = MLPRegressor(**params, random_state=0)
     try:
         for train_index, test_index in tscv.split(X_train):
             X_train_fold, X_test_fold = X_train.iloc[train_index], X_train.iloc[test_index]
             y_train_fold, y_test_fold = Y_train.iloc[train_index], Y_train.iloc[test_index]
+            
+            model = MLPRegressor(**params, random_state=0, early_stopping=True, 
+                         validation_fraction=0.1, n_iter_no_change=10)
             model.fit(X_train_fold, y_train_fold)
-
             preds = model.predict(X_test_fold)
             mse = mean_squared_error(y_test_fold, preds)
             mse_scores.append(mse)
@@ -287,14 +289,16 @@ def trainMLP(res_dict):
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
 
-    study = optuna.create_study(direction='minimize',sampler=optuna.samplers.TPESampler(seed=42))
+    study = optuna.create_study(direction='minimize',sampler=optuna.samplers.TPESampler(seed=42),
+                                pruner=optuna.pruners.MedianPruner())
     study.optimize(lambda trial: mlpObjective(X_train,Y_train,trial), 
                    n_trials=100,
                    n_jobs=-1,
                    callbacks=[MaxTrialsCallback(n_trials=100, states=(TrialState.COMPLETE, TrialState.PRUNED))])
 
     best_params = study.best_params
-    best_model = MLPRegressor(**best_params)
+    best_model = MLPRegressor(**best_params,random_state=0, early_stopping=True, 
+                         validation_fraction=0.1, n_iter_no_change=10)
     best_model.fit(X_train, Y_train)
     preY = best_model.predict(X_test)
     preY = scaler_y.inverse_transform(preY)
