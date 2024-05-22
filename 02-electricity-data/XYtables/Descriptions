@@ -1,0 +1,16 @@
+In this folder, the preprocessed XYtables are saved as .pkl files.
+
+Each .pkl file is a dictionary: {'data':[X_train,X_test,Y_train,Y_test],
+                				 'scalers':[scaler_x,scaler_y],
+                				 'cols':[X_cols,Y_cols]}
+The cols are actual cols, because the cols in tables are changed to X{i} and Y{i} for LightGBM models.
+
+NamesDict.pkl is a a dictionary with the names of regions:
+* Names_more_than_5years: (National): FranceNaion
+						  (Regions) Bourgogne-Franche-Comte, Pays-de-la-Loire, Hauts-de-France, 
+ 						  Provence-Alpes-Cote-dAzur, Bretagne, Normandie, Occitanie, 
+ 						  Grand-Est, Auvergne-Rhone-Alpes, Ile-de-France, Centre-Val-de-Loire, Nouvelle-Aquitaine
+ 						  (Metropoles) Brest, Toulouse, Nancy, Montpellier, Grenoble, Rouen, Rennes, Bordeaux, Nice, Strasbourg
+* Names_5years
+* Names_3years
+We only considers these places to keep the test set is year 2023.
