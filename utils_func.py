@@ -289,9 +289,9 @@ def trainMLP(res_dict):
 
     study = optuna.create_study(direction='minimize',sampler=optuna.samplers.TPESampler(seed=42))
     study.optimize(lambda trial: mlpObjective(X_train,Y_train,trial), 
-                   n_trials=10,
+                   n_trials=100,
                    n_jobs=-1,
-                   callbacks=[MaxTrialsCallback(n_trials=10, states=(TrialState.COMPLETE, TrialState.PRUNED))])
+                   callbacks=[MaxTrialsCallback(n_trials=100, states=(TrialState.COMPLETE, TrialState.PRUNED))])
 
     best_params = study.best_params
     best_model = MLPRegressor(**best_params)
