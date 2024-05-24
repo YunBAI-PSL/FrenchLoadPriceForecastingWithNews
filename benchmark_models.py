@@ -39,7 +39,7 @@ if __name__ == '__main__':
     with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
         NamesDict = pickle.load(f)
     Names = NamesDict['more_than_5years']
-    for Name in Names:
+    for Name in Names[11:]:
         print(Name)
         # create a dict to save results
         resultsDict = dict()
