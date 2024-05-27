@@ -179,7 +179,7 @@ def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y):
     Y_pres_all = expand_data(Y_pres_all,colName='Lasso_forecasts')
     Y_test_all = expand_data(Y_test,colName='Price')
     # Merge predictions with original test data
-    Y_test_all = pd.concat([Y_test_all, Y_pres_all], axis=1)
+    Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
     return Y_test_all
 
 def trainLasso(res_dict,ifPrice):
@@ -450,7 +450,3 @@ def eval_benchmarks(folder_path):
     eval_benchmark_df['lgb_rmse'], eval_benchmark_df['lgb_mae'] = lgb_rmse,lgb_mae
     eval_benchmark_df['mlp_rmse'], eval_benchmark_df['mlp_mae'] = mlp_rmse,mlp_mae
     return eval_benchmark_df
-
-
-
-# %%

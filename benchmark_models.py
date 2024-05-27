@@ -4,7 +4,7 @@ from utils_func import *
 import os
 import time
 
-def benchmarkTraining(Name,ifPrice):
+def benchmarkTraining(Name):
     """
     Name: the name of regions
     """
