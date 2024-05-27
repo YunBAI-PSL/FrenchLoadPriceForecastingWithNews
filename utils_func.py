@@ -17,6 +17,9 @@ from sklearn.metrics import mean_squared_error
 import optuna
 from optuna.study import MaxTrialsCallback
 from optuna.trial import TrialState
+import glob
+import os
+import pickle
 
 #%%
 def resampleDataFrame(df_original):
@@ -144,11 +147,47 @@ def expand_data(data,colName):
         fore_df = pd.concat([fore_df,temp])
     return fore_df
 
-def trainLasso(res_dict):
+def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y):
+    X_train_new = X_train.copy()
+    Y_train_new = Y_train.copy()
+    X_test_new = X_test.copy()
+    Y_test_new = Y_test.copy()
+    
+    all_predictions = []  # List to store all predictions
+    sunday_indexes = X_test_new.resample('W-SUN').last().index
+
+    for sunday_index in sunday_indexes:
+        # Predict with the model until next Sunday
+        preY_new = best_model.predict(X_test_new.loc[:sunday_index])
+        preY_new = scaler_y.inverse_transform(preY_new)
+        
+        # Save predictions
+        all_predictions.append(pd.DataFrame(preY_new, index=X_test_new.loc[:sunday_index].index, columns=Y_test_new.columns))
+        
+        # Add data until next Sunday to training set
+        X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
+        Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
+        
+        # Remove data until next Sunday from test set
+        X_test_new = X_test_new.loc[sunday_index:]
+        Y_test_new = Y_test_new.loc[sunday_index:]
+    
+    # Combine all predictions into a single DataFrame
+    Y_pres_all = pd.concat(all_predictions)
+    Y_pres_all.columns = [f'Lasso_forecasts_{col}' for col in Y_pres_all.columns]
+    Y_pres_all.drop_duplicates(inplace=True)
+    Y_pres_all = expand_data(Y_pres_all,colName='Lasso_forecasts')
+    Y_test_all = expand_data(Y_test,colName='Price')
+    # Merge predictions with original test data
+    Y_test_all = pd.concat([Y_test_all, Y_pres_all], axis=1)
+    return Y_test_all
+
+def trainLasso(res_dict,ifPrice):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
                 				      'cols':[X_cols,Y_cols]}
+    ifPrice: True of False, indicator for price forecasting or not
     """
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
@@ -166,13 +205,17 @@ def trainLasso(res_dict):
     lasso_regressor.fit(X_train, Y_train)
     best_params = lasso_regressor.best_params_
     best_model = lasso_regressor.best_estimator_
-    preY = best_model.predict(X_test)
-    preY = scaler_y.inverse_transform(preY)
-    Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
-    Y_pres_all = expand_data(Y_pres,colName='Lasso_forecasts')
-    Y_test_all = expand_data(Y_test,colName='Load')
-    Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
-    
+
+    if ifPrice:
+        Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
+    else:
+        preY = best_model.predict(X_test)
+        preY = scaler_y.inverse_transform(preY)
+        Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
+        Y_pres_all = expand_data(Y_pres,colName='Lasso_forecasts')
+        Y_test_all = expand_data(Y_test,colName='Load')
+        Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+        
     return Y_test_all, best_params
 
 # Lgb model with optuna
@@ -203,7 +246,7 @@ def lgbObjective(X_train,Y_train,trial):
             
             model = MultiOutputRegressor(lgb.LGBMRegressor(**params))
             model.fit(X_train_fold,y_train_fold)
-            preds = model.predict(X_test_fold)
+            preds = model.predict(X_test_fold, num_iteration=model.best_iteration_)
             mse = mean_squared_error(y_test_fold, preds)
             mse_scores.append(mse)
         average_mse = np.mean(mse_scores)
@@ -215,7 +258,7 @@ def lgbObjective(X_train,Y_train,trial):
 
     return average_mse
 
-def trainLGB(res_dict):
+def trainLGB(res_dict,ifPrice):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
@@ -234,12 +277,15 @@ def trainLGB(res_dict):
     best_params = study.best_params
     best_model = MultiOutputRegressor(lgb.LGBMRegressor(**best_params))
     best_model.fit(X_train, Y_train)
-    preY = best_model.predict(X_test)
-    preY = scaler_y.inverse_transform(preY)
-    Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
-    Y_pres_all = expand_data(Y_pres,colName='LGB_forecasts')
-    Y_test_all = expand_data(Y_test,colName='Load')
-    Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+    if ifPrice:
+        Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
+    else:
+        preY = best_model.predict(X_test)
+        preY = scaler_y.inverse_transform(preY)
+        Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
+        Y_pres_all = expand_data(Y_pres,colName='LGB_forecasts')
+        Y_test_all = expand_data(Y_test,colName='Load')
+        Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
     return Y_test_all, best_params
 
 # MLP model with optuna
@@ -280,7 +326,7 @@ def mlpObjective(X_train,Y_train,trial):
 
     return average_mse
 
-def trainMLP(res_dict):
+def trainMLP(res_dict,ifPrice):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
@@ -300,36 +346,111 @@ def trainMLP(res_dict):
     best_model = MLPRegressor(**best_params,random_state=0, early_stopping=True, 
                          validation_fraction=0.1, n_iter_no_change=10)
     best_model.fit(X_train, Y_train)
-    preY = best_model.predict(X_test)
-    preY = scaler_y.inverse_transform(preY)
-    Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
-    Y_pres_all = expand_data(Y_pres,colName='MLP_forecasts')
-    Y_test_all = expand_data(Y_test,colName='Load')
-    Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
-   
+    if ifPrice:
+        Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
+    else:
+        preY = best_model.predict(X_test)
+        preY = scaler_y.inverse_transform(preY)
+        Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
+        Y_pres_all = expand_data(Y_pres,colName='MLP_forecasts')
+        Y_test_all = expand_data(Y_test,colName='Load')
+        Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+    
     return Y_test_all, best_params
 
 # evaluation basic funcs
+def get_df(Name):
+    """
+    Name: can be 'FranceNation', grand regions, metropolis, and 'price'
+    """
+    # get load or price
+    if Name != 'price':
+        # load data
+        df = pd.read_csv(f'./02-electricity-data/loads/processed_{Name}_load.csv')
+        df = df[['Date','Load']]
+    else:
+    # price data
+        df = pd.read_csv('./02-electricity-data/prices/National_prices.csv')
+        df = df[['Date','price']]
+    df = df.drop_duplicates(subset=['Date'])
+    df = resampleDataFrame(df)
+
+    # get temperatures locally; for price, get national temperatures
+    if Name != 'price':
+        Temp = pd.read_csv(f'./02-electricity-data/temperatures/All/{Name}_temperature.csv')
+    else:
+        Temp = pd.read_csv(f'./02-electricity-data/temperatures/All/FranceNation_temperature.csv')
+    Temp.columns = ['Date','temp']
+    Temp = Temp.drop_duplicates(subset=['Date'])
+    Temp = resampleDataFrame(Temp)  
+
+    df = df.merge(Temp, left_on='Date', right_on='Date', how='left')
+    df = df.dropna()
+
+    return df 
+
 def evaluate_deterministic(Y):
-    stringPred = Y.columns[1]
-    stringObs = 'Load'
-    dateList = Y.index.tolist()
-    Y['horizon'] = [dt.date() for dt in dateList]
+    pred = Y.columns[1]
+    obs = Y.columns[0]
+    date_list = Y.index.tolist()
+    Y['horizon'] = [dt.date() for dt in date_list]
     
-    Y['WEerror'] = Y[stringPred] - Y[stringObs]
+    Y['error'] = Y[pred] - Y[obs]
     
-    Y['WEerrorSquare'] = Y['WEerror']**2
-    Y['WEabsError'] = Y['WEerror'].abs()
-    Y['WEmapeError'] = Y['WEabsError']/np.abs(Y[stringObs])*100
-    
-    #Y['OFIIerror'] = Y['ForecastedLoad'] - Y[stringObs]
-    #Y['OFIIerrorSquare'] = Y['OFIIerror']**2
-    #Y['OFIIabsError'] = Y['OFIIerror'].abs()
-    #Y['OFIIsmapeError'] = Y['OFIIabsError']/((Y['ForecastedLoad'] + Y[stringObs])/2)
+    Y['error_square'] = Y['error']**2
+    Y['mae_error'] = Y['error'].abs()
+    # Y['mape_error'] = Y['mae_error']/np.abs(Y[obs])*100
 
-    dfEvaluationDeterministic = pd.DataFrame(columns=['RMSE', 'MAPE'])
-    dfEvaluationDeterministic['RMSE'] = Y.groupby('horizon').mean()['WEerrorSquare']**0.5
-    dfEvaluationDeterministic['MAPE'] = Y.groupby('horizon').mean()['WEmapeError']
+    df_eval_det = pd.DataFrame(columns=['RMSE', 'MAE'])
+    df_eval_det['RMSE'] = Y.groupby('horizon').mean()['error_square']**0.5
+    # df_eval_det['MAPE'] = Y.groupby('horizon').mean()['mape_error']
+    df_eval_det['MAE'] = Y.groupby('horizon').mean()['mae_error']
 
-    return dfEvaluationDeterministic
+    return df_eval_det
+
+def calculate_rmse_mae(Y):
+    true_values = Y.iloc[:, 0]
+    predicted_values = Y.iloc[:, 1]
+
+    rmse = np.sqrt(np.mean((true_values - predicted_values)**2))
+
+    mae = np.mean(np.abs(true_values - predicted_values))
+    
+    return rmse, mae
+
+def eval_benchmarks(folder_path):
+    location_names = []
+    lasso_rmse, lasso_mae = [],[]
+    lgb_rmse,lgb_mae = [],[]
+    mlp_rmse,mlp_mae = [],[]
+
+    pkl_files = glob.glob(os.path.join(folder_path, '*', 'NoText', 'lasso_lgb_mlp.pkl'))
+
+    for pkl_path in pkl_files:
+        location_name = os.path.basename(os.path.dirname(os.path.dirname(pkl_path)))
+        location_names.append(location_name)
+        print(pkl_path)
+        with open(pkl_path, 'rb') as f:
+            lasso_lgb_mlp = pickle.load(f)
+        eval_lasso = evaluate_deterministic(lasso_lgb_mlp['lasso_fore']).mean()
+        lasso_rmse.append(eval_lasso[0])
+        lasso_mae.append(eval_lasso[1])
+
+        eval_lgb = evaluate_deterministic(lasso_lgb_mlp['lgb_fore']).mean()
+        lgb_rmse.append(eval_lgb[0])
+        lgb_mae.append(eval_lgb[1])
+
+        eval_mlp = evaluate_deterministic(lasso_lgb_mlp['mlp_fore']).mean()
+        mlp_rmse.append(eval_mlp[0])
+        mlp_mae.append(eval_mlp[1])
+
+    eval_benchmark_df = pd.DataFrame()
+    eval_benchmark_df['Locations'] = location_names
+    eval_benchmark_df['lasso_rmse'], eval_benchmark_df['lasso_mae'] = lasso_rmse, lasso_mae
+    eval_benchmark_df['lgb_rmse'], eval_benchmark_df['lgb_mae'] = lgb_rmse,lgb_mae
+    eval_benchmark_df['mlp_rmse'], eval_benchmark_df['mlp_mae'] = mlp_rmse,mlp_mae
+    return eval_benchmark_df
+
+
+
 # %%
