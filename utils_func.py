@@ -7,8 +7,9 @@ Created on Tue May 14 10:28:34 2024
 import pandas as pd
 import numpy as np
 import datetime
+import time
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Lasso
+from sklearn.linear_model import Lasso,LassoLarsIC
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sklearn.multioutput import MultiOutputRegressor
@@ -20,7 +21,123 @@ from optuna.trial import TrialState
 import glob
 import os
 import pickle
+# from LEARscaling import scaling
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
+class MultiOutputLEAR:
+    def __init__(self):
+        self.model = None
+
+    def recalibrate(self, Xtrain, Ytrain, columns_hol):
+        """Function to recalibrate the LEAR model. 
+        
+        It uses a training (Xtrain, Ytrain) pair for recalibration
+        
+        Parameters
+        ----------
+        Xtrain : numpy.array
+            Input in training dataset. It should be of size *[n,m]* where *n* is the number of days
+            in the training dataset and *m* the number of input features
+        
+        Ytrain : numpy.array
+            Output in training dataset. It should be of size *[n,24]* where *n* is the number of days 
+            in the training dataset and 24 are the 24 prices of each day
+        
+        columns_hol: list
+            used to indicate the 0-1 variables in X, can be holidays and weekends, 
+            because 0-1 variables cannot be scaled in this case
+        Returns
+        -------
+        numpy.array
+            The prediction of day-ahead prices after recalibrating the model        
+        
+        """
+
+        # # Applying Invariant, aka asinh-median transformation to the prices
+        [Ytrain], self.scalerY = scaling([Ytrain], 'Invariant')
+
+        # # Rescaling all inputs except dummies (7 last features)
+        all_columns = set(range(Xtrain.shape[1]))
+        not_columns_hol = list(all_columns - set(columns_hol))
+
+        [Xtrain_no_dummies], self.scalerX = scaling([Xtrain[:, not_columns_hol]], 'Invariant')
+        Xtrain[:, not_columns_hol] = Xtrain_no_dummies
+
+        self.models = {}
+        for h in range(24):
+
+            # Estimating lambda hyperparameter using LARS
+            param_model = LassoLarsIC(criterion='aic', max_iter=2500)
+            param = param_model.fit(Xtrain, Ytrain[:, h]).alpha_
+
+            # Re-calibrating LEAR using standard LASSO estimation technique
+            model = Lasso(max_iter=2500, alpha=param)
+            model.fit(Xtrain, Ytrain[:, h])
+            # models[h] = model
+
+            self.models[h] = model
+
+    def predict(self, X, columns_hol):
+        """Function that makes a prediction using some given inputs.
+        
+        Parameters
+        ----------
+        X : numpy.array
+            Input of the model.
+        
+        Returns
+        -------
+        numpy.array
+            An array containing the predictions.
+        """
+
+        # Predefining predicted prices
+        Yp = np.zeros((X.shape[0], 24))
+
+        # # Rescaling all inputs except dummies (7 last features)
+        all_columns = set(range(X.shape[1]))
+        not_columns_hol = list(all_columns - set(columns_hol))
+        
+        X_no_dummies = self.scalerX.transform(X[:, not_columns_hol])
+        X[:, not_columns_hol] = X_no_dummies
+
+        # Predicting the current date using a recalibrated LEAR
+        for h in range(24):
+
+            # Predicting test dataset and saving
+            Yp[:,h] = self.models[h].predict(X)
+        
+        Yp = self.scalerY.inverse_transform(Yp)
+
+        return Yp
+
+    def recalibrate_predict(self, Xtrain, Ytrain, Xtest, columns_hol):
+        """Function that first recalibrates the LEAR model and then makes a prediction.
+
+        The function receives the training dataset, and trains the LEAR model. Then, using
+        the inputs of the test dataset, it makes a new prediction.
+        
+        Parameters
+        ----------
+        Xtrain : numpy.array
+            Input of the training dataset.
+        Xtest : numpy.array
+            Input of the test dataset.
+        Ytrain : numpy.array
+            Output of the training dataset.
+        
+        Returns
+        -------
+        numpy.array
+            An array containing the predictions in the test dataset.
+        """
+
+        self.recalibrate(Xtrain=Xtrain, Ytrain=Ytrain, columns_hol=columns_hol)    
+
+        Yp = self.predict(X=Xtest,columns_hol=columns_hol)
+
+        return Yp
+    
 #%%
 def resampleDataFrame(df_original):
     period = 'H'
@@ -147,7 +264,7 @@ def expand_data(data,colName):
         fore_df = pd.concat([fore_df,temp])
     return fore_df
 
-def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y):
+def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y):
     X_train_new = X_train.copy()
     Y_train_new = Y_train.copy()
     X_test_new = X_test.copy()
@@ -155,22 +272,64 @@ def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y):
     
     all_predictions = []  # List to store all predictions
     sunday_indexes = X_test_new.resample('W-SUN').last().index
+    # sunday_indexes = X_test_new.resample('M').last().index
+    params_dict = dict()
 
     for sunday_index in sunday_indexes:
+        t3 = time.time()
+        print('*'*10)
+        print(sunday_index)
         # Predict with the model until next Sunday
-        preY_new = best_model.predict(X_test_new.loc[:sunday_index])
-        preY_new = scaler_y.inverse_transform(preY_new)
-        
+        try:
+            preY_new = best_model.predict(X_test_new.loc[:sunday_index])
+            preY_new = scaler_y.inverse_transform(preY_new)
+        except:
+            break
+            
+        X_train_idx,X_test_idx = X_train_new.index,X_test_new.index
+        Y_train_idx,Y_cols = Y_train_new.index, Y_train.columns
+        X_cols = X_train_new.columns
+        X_train_new,X_test_new = scaler_x.inverse_transform(X_train_new),scaler_x.inverse_transform(X_test_new)
+        Y_train_new = scaler_y.inverse_transform(Y_train_new)
+
+        X_train_new = pd.DataFrame(X_train_new,index=X_train_idx,columns=X_cols)
+        X_test_new = pd.DataFrame(X_test_new,index=X_test_idx,columns=X_cols)
+        Y_train_new = pd.DataFrame(Y_train_new,index=Y_train_idx,columns=Y_cols)
+    
         # Save predictions
         all_predictions.append(pd.DataFrame(preY_new, index=X_test_new.loc[:sunday_index].index, columns=Y_test_new.columns))
         
         # Add data until next Sunday to training set
-        X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
-        Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
-        
+        try:
+            X_train_new = pd.concat([X_train_new.iloc[-(365*3):], X_test_new.loc[:sunday_index]])
+            Y_train_new = pd.concat([Y_train_new.iloc[-(365*3):], Y_test_new.loc[:sunday_index]])
+        except:
+            X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
+            Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
+            
         # Remove data until next Sunday from test set
-        X_test_new = X_test_new.loc[sunday_index:]
-        Y_test_new = Y_test_new.loc[sunday_index:]
+        if X_test_new.loc[sunday_index + pd.Timedelta(days=1):].shape[0] == 0:
+            break
+        else:
+            X_test_new = X_test_new.loc[sunday_index + pd.Timedelta(days=1):]
+            Y_test_new = Y_test_new.loc[sunday_index + pd.Timedelta(days=1):]
+
+        # rescale data
+        scaler_x = StandardScaler()
+        scaler_x.fit(X_train_new)
+        scaler_y = StandardScaler()
+        scaler_y.fit(Y_train_new)
+
+        X_train_new = scale_data(X_cols,scaler_x,X_train_new)
+        X_test_new = scale_data(X_cols,scaler_x,X_test_new)
+        Y_train_new = scale_data(Y_cols,scaler_y,Y_train_new)
+
+        # retrain models
+        best_params,best_model = LassoCore(X_train_new, Y_train_new)
+        params_dict[sunday_index] = best_params
+        t4 = time.time()
+        print('*'*10)
+        print(t4-t3)
     
     # Combine all predictions into a single DataFrame
     Y_pres_all = pd.concat(all_predictions)
@@ -180,7 +339,22 @@ def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y):
     Y_test_all = expand_data(Y_test,colName='Price')
     # Merge predictions with original test data
     Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
-    return Y_test_all
+    return Y_test_all,params_dict
+
+def LassoCore(X_train, Y_train):
+    lr = Lasso(random_state=42)
+    alphas = {'estimator__alpha': np.logspace(-4, 1, 50)}
+    # alphas = {'estimator__alpha': np.array([0.1])}
+    multi_lr = MultiOutputRegressor(lr)
+    tscv = TimeSeriesSplit(n_splits=5)
+
+    lasso_regressor = GridSearchCV(multi_lr, alphas, 
+                                   scoring='neg_mean_squared_error', 
+                                   cv=tscv, n_jobs=-1)
+    lasso_regressor.fit(X_train, Y_train)
+    best_params = lasso_regressor.best_params_
+    best_model = lasso_regressor.best_estimator_
+    return best_params,best_model
 
 def trainLasso(res_dict,ifPrice):
     """
@@ -192,22 +366,17 @@ def trainLasso(res_dict,ifPrice):
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
-
-    lr = Lasso(random_state=42)
-    alphas = {'estimator__alpha': np.logspace(-4, 1, 50)}
-    # alphas = {'estimator__alpha': np.array([0.01])}
-    multi_lr = MultiOutputRegressor(lr)
-    tscv = TimeSeriesSplit(n_splits=5)
-
-    lasso_regressor = GridSearchCV(multi_lr, alphas, 
-                                   scoring='neg_mean_squared_error', 
-                                   cv=tscv, n_jobs=-1)
-    lasso_regressor.fit(X_train, Y_train)
-    best_params = lasso_regressor.best_params_
-    best_model = lasso_regressor.best_estimator_
+    best_params,best_model = LassoCore(X_train, Y_train)
+    # get best params from the saved file
+    # with open('03-benchmarkResults/FranceNation/NoText/lasso_lgb_mlp.pkl','rb') as f:
+    #     lasso_lgb_mlp = pickle.load(f)
+    # best_params = lasso_lgb_mlp['lasso_param']['estimator__alpha']
+    # best_model = MultiOutputRegressor(Lasso(alpha=best_params, random_state=42))
+    # best_model.fit(X_train,Y_train)
 
     if ifPrice:
-        Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
+        Y_test_all,params_dict = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
+        return Y_test_all, [best_params,params_dict]    
     else:
         preY = best_model.predict(X_test)
         preY = scaler_y.inverse_transform(preY)
@@ -215,8 +384,47 @@ def trainLasso(res_dict,ifPrice):
         Y_pres_all = expand_data(Y_pres,colName='Lasso_forecasts')
         Y_test_all = expand_data(Y_test,colName='Load')
         Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+        return Y_test_all,best_params
+
+def trainLEAR(res_dict,ifPrice):
+    """
+    res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
+                				      'scalers':[scaler_x,scaler_y],
+                				      'cols':[X_cols,Y_cols]}
+    ifPrice: True of False, indicator for price forecasting or not
+    """
+    # load data   
+    X_train, X_test, Y_train, Y_test = res_dict['data']
+    scaler_x,scaler_y = res_dict['scalers']
+    X_train = scaler_x.inverse_transform(X_train)
+    X_test = scaler_x.inverse_transform(X_test)
+    Y_train = scaler_y.inverse_transform(Y_train)
+
+    def find_columns(arr):
+        columns_with_both = []
+        for i in range(arr.shape[1]):
+            unique_values = np.unique(arr[:, i])
+            if len(unique_values) == 2 and 0 in unique_values and 1 in unique_values:
+                columns_with_both.append(i)
+        return columns_with_both
+    
+    columns_hol = find_columns(X_train)
+
+    LEAR = MultiOutputLEAR()
+    # preY = LEAR.recalibrate_predict(X_train, Y_train, X_test,columns_hol)
+
+    if ifPrice:
+        Y_test_all,params_dict = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
+    else:
+        preY = LEAR.recalibrate_predict(X_train, Y_train, X_test,columns_hol)
+        # preY = scaler_y.inverse_transform(preY)
         
-    return Y_test_all, best_params
+        Y_pres = pd.DataFrame(preY,index=Y_test.index,columns=Y_test.columns)
+        Y_pres_all = expand_data(Y_pres,colName='Lasso_forecasts')
+        Y_test_all = expand_data(Y_test,colName='Load')
+        Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+        
+    return Y_test_all,params_dict
 
 # Lgb model with optuna
 def lgbObjective(X_train,Y_train,trial):
@@ -450,3 +658,7 @@ def eval_benchmarks(folder_path):
     eval_benchmark_df['lgb_rmse'], eval_benchmark_df['lgb_mae'] = lgb_rmse,lgb_mae
     eval_benchmark_df['mlp_rmse'], eval_benchmark_df['mlp_mae'] = mlp_rmse,mlp_mae
     return eval_benchmark_df
+
+
+
+# %%
