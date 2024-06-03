@@ -264,6 +264,24 @@ def expand_data(data,colName):
         fore_df = pd.concat([fore_df,temp])
     return fore_df
 
+# forecasting models
+def calPersistence(Name):
+    load_path = f'./02-electricity-data/XYtables/{Name}.pkl'
+    with open(load_path,'rb') as f:
+        res_dict = pickle.load(f)
+    _, _, Y_train, Y_test = res_dict['data']
+    _,scaler_y = res_dict['scalers']
+    idx_Y,cols_Y = Y_train.index,Y_train.columns
+    Y_train = scaler_y.inverse_transform(Y_train)
+    Y_train = pd.DataFrame(Y_train,index=idx_Y,columns=cols_Y)
+    Y = pd.concat([Y_train,Y_test])
+    Y_persi = Y.shift(1)
+    Y_persi = Y_persi[Y_persi.index >= '2023-12-01']
+    Y_pres_all = expand_data(Y_persi,colName='Persi_forecasts')
+    Y_test_all = expand_data(Y_test,colName='Load')
+    Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
+    return Y_test_all
+
 def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y):
     X_train_new = X_train.copy()
     Y_train_new = Y_train.copy()
@@ -356,16 +374,50 @@ def LassoCore(X_train, Y_train):
     best_model = lasso_regressor.best_estimator_
     return best_params,best_model
 
-def trainLasso(res_dict,ifPrice):
+def get_inverse_scale_df(df,scaler):
+    cols,idx = df.columns,df.index
+    df = scaler.inverse_transform(df)
+    df = pd.DataFrame(df,index=idx,columns=cols)
+    return df
+
+def add_Ecodata(X_train,X_test,scaler_x):
+    # inverse the data to add eco features
+    X_train = get_inverse_scale_df(X_train,scaler_x)
+    X_test = get_inverse_scale_df(X_test,scaler_x)
+
+    # add eco features
+    eco_data = pd.read_csv('02-electricity-data/EconomicData/eco_data.csv')
+    eco_data = resampleDataFrame(eco_data)
+
+    X_train = X_train.rename_axis('Date')
+    X_test = X_test.rename_axis('Date')
+    X_train = X_train.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    X_test = X_test.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    X_cols = X_train.columns
+
+    scaler_x = StandardScaler()
+    scaler_x.fit(X_train)
+    
+    X_train = scale_data(X_cols,scaler_x,X_train)
+    X_test = scale_data(X_cols,scaler_x,X_test)
+    
+    return X_train,X_test,scaler_x
+
+def trainLasso(res_dict,ifRecalibrate,ifEcoData):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
                 				      'cols':[X_cols,Y_cols]}
-    ifPrice: True of False, indicator for price forecasting or not
+    ifRecalibrate: True of False, indicator for Recalibrate forecasting or not
+    ifEcoData: True of False, indicator for adding economic data or not
     """
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
+
+    if ifEcoData:
+        X_train,X_test,scaler_x = add_Ecodata(X_train,X_test,scaler_x)
+
     best_params,best_model = LassoCore(X_train, Y_train)
     # get best params from the saved file
     # with open('03-benchmarkResults/FranceNation/NoText/lasso_lgb_mlp.pkl','rb') as f:
@@ -374,7 +426,7 @@ def trainLasso(res_dict,ifPrice):
     # best_model = MultiOutputRegressor(Lasso(alpha=best_params, random_state=42))
     # best_model.fit(X_train,Y_train)
 
-    if ifPrice:
+    if ifRecalibrate:
         Y_test_all,params_dict = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
         return Y_test_all, [best_params,params_dict]    
     else:
@@ -386,12 +438,12 @@ def trainLasso(res_dict,ifPrice):
         Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
         return Y_test_all,best_params
 
-def trainLEAR(res_dict,ifPrice):
+def trainLEAR(res_dict,ifRecalibrate):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
                 				      'cols':[X_cols,Y_cols]}
-    ifPrice: True of False, indicator for price forecasting or not
+    ifRecalibrate: True of False, indicator for price forecasting or not
     """
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
@@ -413,7 +465,7 @@ def trainLEAR(res_dict,ifPrice):
     LEAR = MultiOutputLEAR()
     # preY = LEAR.recalibrate_predict(X_train, Y_train, X_test,columns_hol)
 
-    if ifPrice:
+    if ifRecalibrate:
         Y_test_all,params_dict = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
     else:
         preY = LEAR.recalibrate_predict(X_train, Y_train, X_test,columns_hol)
@@ -466,7 +518,7 @@ def lgbObjective(X_train,Y_train,trial):
 
     return average_mse
 
-def trainLGB(res_dict,ifPrice):
+def trainLGB(res_dict,ifRecalibrate):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
@@ -485,7 +537,7 @@ def trainLGB(res_dict,ifPrice):
     best_params = study.best_params
     best_model = MultiOutputRegressor(lgb.LGBMRegressor(**best_params))
     best_model.fit(X_train, Y_train)
-    if ifPrice:
+    if ifRecalibrate:
         Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
     else:
         preY = best_model.predict(X_test)
@@ -534,7 +586,7 @@ def mlpObjective(X_train,Y_train,trial):
 
     return average_mse
 
-def trainMLP(res_dict,ifPrice):
+def trainMLP(res_dict,ifRecalibrate):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
@@ -554,7 +606,7 @@ def trainMLP(res_dict,ifPrice):
     best_model = MLPRegressor(**best_params,random_state=0, early_stopping=True, 
                          validation_fraction=0.1, n_iter_no_change=10)
     best_model.fit(X_train, Y_train)
-    if ifPrice:
+    if ifRecalibrate:
         Y_test_all = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_y)
     else:
         preY = best_model.predict(X_test)

@@ -19,13 +19,16 @@ def benchmarkTraining(Name):
     #     ifPrice = True
     # else:
     #     ifPrice = False
-    ifPrice = True
-    print(ifPrice)
+    ifRecalibrate = True
+    print(ifRecalibrate)
+
+    ifEcoData = True
+    print(ifEcoData)
     # train the benchmark models
     t1 = time.time()
-    Y_test_lasso,best_params = trainLasso(res_dict,ifPrice)
-    # Y_test_lgb,param_lgb = trainLGB(res_dict,ifPrice)
-    # Y_test_mlp,param_mlp = trainMLP(res_dict,ifPrice)
+    Y_test_lasso,best_params = trainLasso(res_dict,ifRecalibrate,ifEcoData)
+    # Y_test_lgb,param_lgb = trainLGB(res_dict,ifRecalibrate)
+    # Y_test_mlp,param_mlp = trainMLP(res_dict,ifRecalibrate)
     resultsDict['lasso_fore'], resultsDict['lasso_param'] = Y_test_lasso,best_params
     # resultsDict['lgb_fore'], resultsDict['lgb_param'] = Y_test_lgb,param_lgb
     # resultsDict['mlp_fore'], resultsDict['mlp_param'] = Y_test_mlp,param_mlp 
@@ -34,30 +37,49 @@ def benchmarkTraining(Name):
     print(t2-t1)
 
     # save the results dict
-    save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso.pkl'
-    directory = os.path.dirname(save_path)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    with open(save_path,'wb') as f:
-        pickle.dump(resultsDict,f)
+    # save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso.pkl'
+    # directory = os.path.dirname(save_path)
+    # if not os.path.exists(directory):
+    #     os.makedirs(directory)
+    # with open(save_path,'wb') as f:
+    #     pickle.dump(resultsDict,f)
 
-    
-    # # evaluation benchmark models
+    # evaluation benchmark models
     # eval_benchmark_df = eval_benchmarks('03-benchmarkResults')
     # eval_benchmark_df.to_csv('03-benchmarkResults/results_rmse_mae.csv')
-    # return Y_test_lasso,best_params
+    return Y_test_lasso,best_params
 
 if __name__ == '__main__':
-    # Lasso, LightGBM, MLP as benchmarks
-    with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
-        NamesDict = pickle.load(f)
-    Names = NamesDict['more_than_5years']+['price']
-    # print(Names)
-    for Name in Names[5:]:
-        print(Name)
-        benchmarkTraining(Name)
+    # # Lasso, LightGBM, MLP as benchmarks
+    # with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
+    #     NamesDict = pickle.load(f)
+    # Names = NamesDict['more_than_5years']+['price']
+    # # print(Names)
+    # rmse_l,mae_l = [],[]
+    # for Name in Names:
+    #     print(Name)
+    #     # benchmarkTraining(Name)
+    #     # get persistence and skill scores
+    #     persi_df = calPersistence(Name)
+    #     persi_df.to_csv(f'./03-benchmarkResults/{Name}/NoText/persi_df.csv')
+    #     # eval and save
+    #     # with open(f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso.pkl', 'rb') as f:
+    #     #     resultsDict = pickle.load(f)
+    #     # lasso_fore = resultsDict['lasso_fore']
+    #     metrics = evaluate_deterministic(persi_df).mean()
+    #     RMSE,MAE = metrics[0],metrics[1]
+    #     rmse_l.append(RMSE)
+    #     mae_l.append(MAE)
+    
+    # eval_df = pd.DataFrame()
+    # eval_df['Locations'] = Names
+    # eval_df['persistence_rmse'],eval_df['persistence_mae'] = rmse_l,mae_l
+    # eval_df.to_csv('./03-benchmarkResults/persistence_rmse_mae.csv',index=False)
 
-    # Y_test_lasso,best_params = benchmarkTraining('FranceNation')
+    Y_test_lasso,best_params = benchmarkTraining('FranceNation')
+    print(best_params)
+    eval_nation_recali = evaluate_deterministic(Y_test_lasso).mean()
+    print(eval_nation_recali)
     # eval_benchmark_df = eval_benchmarks('03-benchmarkResults')
     # # eval_benchmark_df.to_csv('03-benchmarkResults/results_rmse_mae.csv')
     
