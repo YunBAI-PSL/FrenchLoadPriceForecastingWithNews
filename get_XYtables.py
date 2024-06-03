@@ -61,6 +61,9 @@ def get_holidays_dummies(Name):
     holidayDf.set_index('Date')
 
     df_bank = pd.get_dummies(holidayDf['bank_holiday'])
+    # keep only normal, 1er janvier, Jour de Noël
+    df_bank = df_bank[['1er janvier','Jour de Noël','Normal']]
+
     df_bank['Date'] = dates
     df_bank.set_index('Date')
     if Name != 'FranceNation':
@@ -134,7 +137,7 @@ def addFeats(Name):
     df = reshapeDf(df,colName='L1-Hour',if_set_df_index=False)
     
     # shift data to get the D-1 and D-6 lags
-    for h in [1,6]:
+    for h in [1,2,6]:
         for i,col in enumerate(df.columns):
             if 'L1' in col:
                 df[f'L{h+1}-Hour{i}'] = df[f'L1-Hour{i}'].shift(h)
@@ -280,13 +283,14 @@ def getNames():
 
 
 if __name__ == '__main__':
-    with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
-        NamesDict = pickle.load(f)
-    Names = NamesDict['more_than_5years'] + ['price']
-    for Name in Names:
-        print(Name)
+    # with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
+    #     NamesDict = pickle.load(f)
+    # Names = NamesDict['more_than_5years'] + ['price']
+    # for Name in Names:
+    #     print(Name)
+        Name = 'FranceNation'
         res_dict = getTrainTest(Name)
-        save_path = f'./02-electricity-data/XYtables/{Name}.pkl'
+        save_path = f'./02-electricity-data/XYtables/{Name}0603.pkl'
         directory = os.path.dirname(save_path)
         if not os.path.exists(directory):
             os.makedirs(directory)

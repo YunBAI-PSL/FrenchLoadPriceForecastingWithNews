@@ -21,6 +21,7 @@ from optuna.trial import TrialState
 import glob
 import os
 import pickle
+from scipy.stats import skew, kurtosis, norm, probplot, jarque_bera
 # from LEARscaling import scaling
 os.environ['PYTHONWARNINGS'] = 'ignore'
 
@@ -208,11 +209,11 @@ def encodeTimeStamp(df,isTarget):
         dayofweek = df.index.dayofweek
         dayofyear = df.index.dayofyear
     
-    # df['dayofweek_sin'] = np.sin(2 * np.pi * dayofweek / 7.0)
-    # df['dayofweek_cos'] = np.cos(2 * np.pi * dayofweek / 7.0)
+    df['dayofweek_sin'] = np.sin(2 * np.pi * dayofweek / 7.0)
+    df['dayofweek_cos'] = np.cos(2 * np.pi * dayofweek / 7.0)
     
     df['dayofyear_sin'] = np.sin(2 * np.pi * dayofyear / 365.25)
-    # df['dayofyear_cos'] = np.cos(2 * np.pi * dayofyear / 365.25)
+    df['dayofyear_cos'] = np.cos(2 * np.pi * dayofyear / 365.25)
     
     return df
 
@@ -386,15 +387,25 @@ def add_Ecodata(X_train,X_test,scaler_x):
     X_test = get_inverse_scale_df(X_test,scaler_x)
 
     # add eco features
-    eco_data = pd.read_csv('02-electricity-data/EconomicData/eco_data.csv')
-    eco_data = resampleDataFrame(eco_data)
+    # eco_data = pd.read_csv('02-electricity-data/EconomicData/eco_data.csv')
+    # eco_data = resampleDataFrame(eco_data)
 
-    X_train = X_train.rename_axis('Date')
-    X_test = X_test.rename_axis('Date')
-    X_train = X_train.merge(eco_data,left_on='Date',right_on='Date',how='inner')
-    X_test = X_test.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    # X_train = X_train.rename_axis('Date')
+    # X_test = X_test.rename_axis('Date')
+    # X_train = X_train.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    # X_test = X_test.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+
+    # remove the other holidays that are not importance
+    # only keep the 1.1, noel, non-holiday days and school holidays
+    columns_to_remove = [96,97,99,100,101,102,104,105,107,108]
+    columns_to_remove_names = X_train.columns[columns_to_remove]
+    X_train = X_train.drop(columns=columns_to_remove_names)
+    X_test = X_test.drop(columns=columns_to_remove_names)
     X_cols = X_train.columns
-
+    
+    for feat in X_cols:
+        X_train[feat] = X_train[feat].apply(lambda x: np.log(x+abs(min(X_train[feat]))+1))
+        X_test[feat] = X_test[feat].apply(lambda x: np.log(abs(min(X_test[feat]))+1))
     scaler_x = StandardScaler()
     scaler_x.fit(X_train)
     
@@ -402,6 +413,18 @@ def add_Ecodata(X_train,X_test,scaler_x):
     X_test = scale_data(X_cols,scaler_x,X_test)
     
     return X_train,X_test,scaler_x
+
+def extract_feature_importance(best_model, feature_names):
+    feature_importance = np.array([est.coef_ for est in best_model.estimators_])
+    avg_feature_importance = np.mean(np.abs(feature_importance), axis=0)
+    feature_importance_df = pd.DataFrame({
+        'feature': feature_names,
+        'importance': list(avg_feature_importance)
+    })
+    
+    feature_importance_df = feature_importance_df.sort_values(by='importance', ascending=False)
+    
+    return feature_importance_df
 
 def trainLasso(res_dict,ifRecalibrate,ifEcoData):
     """
@@ -419,6 +442,14 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
         X_train,X_test,scaler_x = add_Ecodata(X_train,X_test,scaler_x)
 
     best_params,best_model = LassoCore(X_train, Y_train)
+
+    # get feature importance
+    # feature_names = res_dict['cols'][0] + ['Unemployment','Inflation','GDP']
+    # feature_importance_df = extract_feature_importance(best_model, feature_names)
+    # feature_importance_df.to_csv('03-benchmarkResults/FranceNation/NoText/feat_importance.csv',index=False)
+
+
+
     # get best params from the saved file
     # with open('03-benchmarkResults/FranceNation/NoText/lasso_lgb_mlp.pkl','rb') as f:
     #     lasso_lgb_mlp = pickle.load(f)
@@ -437,6 +468,7 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
         Y_test_all = expand_data(Y_test,colName='Load')
         Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
         return Y_test_all,best_params
+
 
 def trainLEAR(res_dict,ifRecalibrate):
     """
@@ -711,6 +743,3 @@ def eval_benchmarks(folder_path):
     eval_benchmark_df['mlp_rmse'], eval_benchmark_df['mlp_mae'] = mlp_rmse,mlp_mae
     return eval_benchmark_df
 
-
-
-# %%
