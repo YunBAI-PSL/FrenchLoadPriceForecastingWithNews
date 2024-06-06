@@ -105,9 +105,15 @@ def get_temperatures_nation():
     for i,region in enumerate(regions):
         temp = get_temperatures(region)
         temp_arrays[:,i] = np.array(temp).reshape(-1,)
-    nation_mean = np.mean(temp_arrays,axis=1)
-    temp_1['temp'] = nation_mean
-    temp_1.to_csv('././02-electricity-data/temperatures/All/Nation_temperature.csv')
+    
+    temp_regions = pd.DataFrame(temp_arrays,columns=['Temp_'+i for i in regions])
+    temp_regions.index = temp_1.index
+    temp_regions = temp_regions.rename_axis('date')
+    temp_regions = temp_regions.resample('D').mean()
+    temp_regions.to_csv('./02-electricity-data/temperatures/All/Nation_temperature_regions.csv')
+    # nation_mean = np.mean(temp_arrays,axis=1)
+    # temp_1['temp'] = nation_mean
+    # temp_1.to_csv('./02-electricity-data/temperatures/All/Nation_temperature.csv')
 
 def addFeats(Name):
     """
@@ -131,13 +137,20 @@ def addFeats(Name):
         weather_load_gas = weather_load_gas.rename(columns={'CONSOMMATION':'generation',
                                                             'PREVISION_J':'load_feat',
                                                             'prix_gaz':'gas_price'})
-        
+    # get the daily and weekly averages
+    avg_df = df.copy()
+    avg_df['daily_mean'] = avg_df['Load'].resample('D').mean()
+    avg_df['daily_mean'] = avg_df['daily_mean'].ffill()
+ 
+    avg_df = avg_df[['daily_mean']]
+    avg_df = avg_df.shift(1)
+    avg_df = avg_df.dropna()
   
     # make the table of 24 hour columns
     df = reshapeDf(df,colName='L1-Hour',if_set_df_index=False)
     
     # shift data to get the D-1 and D-6 lags
-    for h in [1,2,6]:
+    for h in [1,6]:
         for i,col in enumerate(df.columns):
             if 'L1' in col:
                 df[f'L{h+1}-Hour{i}'] = df[f'L1-Hour{i}'].shift(h)
@@ -152,10 +165,17 @@ def addFeats(Name):
     for i in range(24):
         df[f'target_Hour_{i}'] = df[f'L1-Hour{i}'].shift(-1)
     
+    # Add daily and weekly load average
+    avg_df = avg_df.rename_axis('date')
+    df = df.merge(avg_df,left_on='date', right_on='date', how='left')
+    X_cols = X_cols + ['daily_mean']
+
     # Add temperature on issued date
     if Name != 'price':
-        Temp = pd.read_csv(f'./02-electricity-data/temperatures/All/{Name}_temperature.csv')
-        Temp = reshapeDf(Temp,colName='Temp',if_set_df_index=True)
+        Temp = pd.read_csv('./02-electricity-data/temperatures/All/Nation_temperature_regions.csv')
+        # Temp = reshapeDf(Temp,colName='Temp',if_set_df_index=True)
+        Temp['date'] = pd.to_datetime(Temp['date'],utc=True)
+        Temp = Temp.set_index('date')
         df = df.merge(Temp,left_on='date', right_on='date', how='left')
         X_cols = X_cols+list(Temp.columns)
     
@@ -290,7 +310,7 @@ if __name__ == '__main__':
     #     print(Name)
         Name = 'FranceNation'
         res_dict = getTrainTest(Name)
-        save_path = f'./02-electricity-data/XYtables/{Name}0603.pkl'
+        save_path = f'./02-electricity-data/XYtables/{Name}0604.pkl'
         directory = os.path.dirname(save_path)
         if not os.path.exists(directory):
             os.makedirs(directory)
