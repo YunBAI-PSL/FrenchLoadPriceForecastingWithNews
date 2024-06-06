@@ -13,6 +13,7 @@ from sklearn.linear_model import Lasso,LassoLarsIC
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.ensemble import ExtraTreesRegressor
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 import optuna
@@ -209,11 +210,11 @@ def encodeTimeStamp(df,isTarget):
         dayofweek = df.index.dayofweek
         dayofyear = df.index.dayofyear
     
-    df['dayofweek_sin'] = np.sin(2 * np.pi * dayofweek / 7.0)
-    df['dayofweek_cos'] = np.cos(2 * np.pi * dayofweek / 7.0)
+    # df['dayofweek_sin'] = np.sin(2 * np.pi * dayofweek / 7.0)
+    # df['dayofweek_cos'] = np.cos(2 * np.pi * dayofweek / 7.0)
     
     df['dayofyear_sin'] = np.sin(2 * np.pi * dayofyear / 365.25)
-    df['dayofyear_cos'] = np.cos(2 * np.pi * dayofyear / 365.25)
+    # df['dayofyear_cos'] = np.cos(2 * np.pi * dayofyear / 365.25)
     
     return df
 
@@ -320,8 +321,8 @@ def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler
         
         # Add data until next Sunday to training set
         try:
-            X_train_new = pd.concat([X_train_new.iloc[-(365*3):], X_test_new.loc[:sunday_index]])
-            Y_train_new = pd.concat([Y_train_new.iloc[-(365*3):], Y_test_new.loc[:sunday_index]])
+            X_train_new = pd.concat([X_train_new.iloc[-(365*3+7):], X_test_new.loc[:sunday_index]])
+            Y_train_new = pd.concat([Y_train_new.iloc[-(365*3+7):], Y_test_new.loc[:sunday_index]])
         except:
             X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
             Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
@@ -387,25 +388,20 @@ def add_Ecodata(X_train,X_test,scaler_x):
     X_test = get_inverse_scale_df(X_test,scaler_x)
 
     # add eco features
-    # eco_data = pd.read_csv('02-electricity-data/EconomicData/eco_data.csv')
-    # eco_data = resampleDataFrame(eco_data)
+    eco_data = pd.read_csv('02-electricity-data/EconomicData/eco_data.csv')
+    eco_data = resampleDataFrame(eco_data)
 
-    # X_train = X_train.rename_axis('Date')
-    # X_test = X_test.rename_axis('Date')
-    # X_train = X_train.merge(eco_data,left_on='Date',right_on='Date',how='inner')
-    # X_test = X_test.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    X_train = X_train.rename_axis('Date')
+    X_test = X_test.rename_axis('Date')
+    X_train = X_train.merge(eco_data,left_on='Date',right_on='Date',how='inner')
+    X_test = X_test.merge(eco_data,left_on='Date',right_on='Date',how='inner')
 
-    # remove the other holidays that are not importance
-    # only keep the 1.1, noel, non-holiday days and school holidays
-    columns_to_remove = [96,97,99,100,101,102,104,105,107,108]
-    columns_to_remove_names = X_train.columns[columns_to_remove]
-    X_train = X_train.drop(columns=columns_to_remove_names)
-    X_test = X_test.drop(columns=columns_to_remove_names)
     X_cols = X_train.columns
     
-    for feat in X_cols:
-        X_train[feat] = X_train[feat].apply(lambda x: np.log(x+abs(min(X_train[feat]))+1))
-        X_test[feat] = X_test[feat].apply(lambda x: np.log(abs(min(X_test[feat]))+1))
+    # for feat in X_cols:
+    #     X_train[feat] = X_train[feat].apply(lambda x: np.log(x+1))
+    #     X_test[feat] = X_test[feat].apply(lambda x: np.log(x+1))
+    
     scaler_x = StandardScaler()
     scaler_x.fit(X_train)
     
@@ -437,6 +433,9 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
+    if X_train.shape[0] > 365*3:
+        X_train = X_train.iloc[-365*3:,:]
+        Y_train = Y_train.iloc[-365*3:,:]
 
     if ifEcoData:
         X_train,X_test,scaler_x = add_Ecodata(X_train,X_test,scaler_x)
@@ -445,10 +444,9 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
 
     # get feature importance
     # feature_names = res_dict['cols'][0] + ['Unemployment','Inflation','GDP']
-    # feature_importance_df = extract_feature_importance(best_model, feature_names)
-    # feature_importance_df.to_csv('03-benchmarkResults/FranceNation/NoText/feat_importance.csv',index=False)
-
-
+    feature_names = res_dict['cols'][0]
+    feature_importance_df = extract_feature_importance(best_model, feature_names)
+    feature_importance_df.to_csv('03-benchmarkResults/FranceNation/NoText/feat_importance.csv',index=False)
 
     # get best params from the saved file
     # with open('03-benchmarkResults/FranceNation/NoText/lasso_lgb_mlp.pkl','rb') as f:
@@ -468,7 +466,6 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
         Y_test_all = expand_data(Y_test,colName='Load')
         Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
         return Y_test_all,best_params
-
 
 def trainLEAR(res_dict,ifRecalibrate):
     """
@@ -650,6 +647,72 @@ def trainMLP(res_dict,ifRecalibrate):
     
     return Y_test_all, best_params
 
+# Extratrees model with optuna
+def ETRObjective(X_train, Y_train, trial):
+    """
+    trial: compute trial by optuna
+    """
+    tscv = TimeSeriesSplit(n_splits=5)
+
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'random_state': 42
+    }
+
+    # Save MSE for each fold
+    mse_scores = []
+    try:
+        for train_index, test_index in tscv.split(X_train):
+            X_train_fold, X_test_fold = X_train.iloc[train_index], X_train.iloc[test_index]
+            y_train_fold, y_test_fold = Y_train.iloc[train_index], Y_train.iloc[test_index]
+            
+            model = ExtraTreesRegressor(**params)
+            model.fit(X_train_fold, y_train_fold)
+            preds = model.predict(X_test_fold)
+            mse = mean_squared_error(y_test_fold, preds)
+            mse_scores.append(mse)
+        average_mse = np.mean(mse_scores)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        average_mse = float('inf')
+    if trial.should_prune():
+        raise optuna.exceptions.TrialPruned()
+
+    return average_mse
+
+def trainETR(res_dict, ifRecalibrate):
+    """
+    res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
+                                      'scalers':[scaler_x,scaler_y],
+                                      'cols':[X_cols,Y_cols]}
+    """
+    X_train, X_test, Y_train, Y_test = res_dict['data']
+    scaler_x, scaler_y = res_dict['scalers']
+
+    study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(seed=42),
+                                pruner=optuna.pruners.MedianPruner())
+    study.optimize(lambda trial: ETRObjective(X_train, Y_train, trial), 
+                   n_trials=100,
+                   n_jobs=-1,
+                   callbacks=[MaxTrialsCallback(n_trials=100, states=(TrialState.COMPLETE, TrialState.PRUNED))])
+
+    best_params = study.best_params
+    best_model = ExtraTreesRegressor(**best_params)
+    best_model.fit(X_train, Y_train)
+    
+    if ifRecalibrate:
+        Y_test_all = rolling_train_price(X_train, Y_train, X_test, Y_test, best_model, scaler_y)
+    else:
+        preY = best_model.predict(X_test)
+        preY = scaler_y.inverse_transform(preY)
+        Y_pres = pd.DataFrame(preY, index=Y_test.index, columns=Y_test.columns)
+        Y_pres_all = expand_data(Y_pres, colName='ETR_forecasts')
+        Y_test_all = expand_data(Y_test, colName='Load')
+        Y_test_all = Y_test_all.merge(Y_pres_all, left_on='Date', right_on='Date', how='inner')
+    
+    return Y_test_all, best_params
+
 # evaluation basic funcs
 def get_df(Name):
     """
@@ -743,3 +806,11 @@ def eval_benchmarks(folder_path):
     eval_benchmark_df['mlp_rmse'], eval_benchmark_df['mlp_mae'] = mlp_rmse,mlp_mae
     return eval_benchmark_df
 
+def eval_rte_benchmark():
+    df = pd.read_csv('02-electricity-data/FranceNation/processed_FranceNation_load_J1.csv')
+    # df = pd.read_csv('02-electricity-data/FranceNation/processed_FranceNation_load.csv')
+    df = df.drop_duplicates(subset=['Date'])
+    df = resampleDataFrame(df)
+    df = df[df.index>='2023-01-02']
+    eval_rte = evaluate_deterministic(df).mean()
+    print(eval_rte)
