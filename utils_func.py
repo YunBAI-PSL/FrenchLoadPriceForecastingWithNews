@@ -284,18 +284,19 @@ def calPersistence(Name):
     Y_test_all = Y_test_all.merge(Y_pres_all,left_on='Date', right_on='Date', how='inner')
     return Y_test_all
 
-def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y):
+def rolling_train_price(Name,X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y):
     X_train_new = X_train.copy()
     Y_train_new = Y_train.copy()
     X_test_new = X_test.copy()
-    Y_test_new = Y_test.copy()
+    Y_test_new = Y_test.copy()  
     
     all_predictions = []  # List to store all predictions
     sunday_indexes = X_test_new.resample('W-SUN').last().index
     # sunday_indexes = X_test_new.resample('M').last().index
     params_dict = dict()
 
-    for sunday_index in sunday_indexes:
+    # for sunday_index in sunday_indexes:
+    for sunday_index in list(X_test_new.index):
         t3 = time.time()
         print('*'*10)
         print(sunday_index)
@@ -320,13 +321,17 @@ def rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler
         all_predictions.append(pd.DataFrame(preY_new, index=X_test_new.loc[:sunday_index].index, columns=Y_test_new.columns))
         
         # Add data until next Sunday to training set
-        try:
-            X_train_new = pd.concat([X_train_new.iloc[-(365*3+7):], X_test_new.loc[:sunday_index]])
-            Y_train_new = pd.concat([Y_train_new.iloc[-(365*3+7):], Y_test_new.loc[:sunday_index]])
-        except:
+        if Name != 'price':
+            try:
+                X_train_new = pd.concat([X_train_new.iloc[-365*3:], X_test_new.loc[:sunday_index]])
+                Y_train_new = pd.concat([Y_train_new.iloc[-365*3:], Y_test_new.loc[:sunday_index]])
+            except:
+                X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
+                Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
+        else:
             X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
             Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
-            
+                
         # Remove data until next Sunday from test set
         if X_test_new.loc[sunday_index + pd.Timedelta(days=1):].shape[0] == 0:
             break
@@ -422,7 +427,7 @@ def extract_feature_importance(best_model, feature_names):
     
     return feature_importance_df
 
-def trainLasso(res_dict,ifRecalibrate,ifEcoData):
+def trainLasso(Name,res_dict,ifRecalibrate,ifEcoData):
     """
     res_dict: results from XYtables, {'data':[X_train,X_test,Y_train,Y_test],
                 				      'scalers':[scaler_x,scaler_y],
@@ -433,9 +438,16 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
-    if X_train.shape[0] > 365*3:
-        X_train = X_train.iloc[-365*3:,:]
-        Y_train = Y_train.iloc[-365*3:,:]
+    # # to predict the prices in 2021,2022,2023
+    # X_train_p = X_train[X_train.index<'2022-01-01']
+    # X_test_p = X_train[(X_train.index>='2022-01-01')&(X_train.index<'2023-01-01')]
+    # Y_train_p = Y_train[Y_train.index<'2022-01-01']
+    # Y_test_p = Y_train[(Y_train.index>='2022-01-01')&(Y_train.index<'2023-01-01')]
+    # X_train, X_test, Y_train, Y_test = X_train_p, X_test_p, Y_train_p, Y_test_p
+
+    # if X_train.shape[0] > 365*3:
+    #     X_train = X_train.iloc[-365*3:,:]
+    #     Y_train = Y_train.iloc[-365*3:,:]
 
     if ifEcoData:
         X_train,X_test,scaler_x = add_Ecodata(X_train,X_test,scaler_x)
@@ -444,9 +456,9 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
 
     # get feature importance
     # feature_names = res_dict['cols'][0] + ['Unemployment','Inflation','GDP']
-    feature_names = res_dict['cols'][0]
-    feature_importance_df = extract_feature_importance(best_model, feature_names)
-    feature_importance_df.to_csv('03-benchmarkResults/FranceNation/NoText/feat_importance.csv',index=False)
+    # feature_names = res_dict['cols'][0]
+    # feature_importance_df = extract_feature_importance(best_model, feature_names)
+    # feature_importance_df.to_csv('03-benchmarkResults/FranceNation/NoText/feat_importance.csv',index=False)
 
     # get best params from the saved file
     # with open('03-benchmarkResults/FranceNation/NoText/lasso_lgb_mlp.pkl','rb') as f:
@@ -456,7 +468,7 @@ def trainLasso(res_dict,ifRecalibrate,ifEcoData):
     # best_model.fit(X_train,Y_train)
 
     if ifRecalibrate:
-        Y_test_all,params_dict = rolling_train_price(X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
+        Y_test_all,params_dict = rolling_train_price(Name,X_train,Y_train,X_test,Y_test,best_model,scaler_x,scaler_y)
         return Y_test_all, [best_params,params_dict]    
     else:
         preY = best_model.predict(X_test)
