@@ -41,7 +41,7 @@ def benchmarkTraining(Name):
     print(t2-t1)
 
     # save the results dict
-    save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso_test_2023_day_all_data.pkl'
+    save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso_test_2021_day_all_data.pkl'
     directory = os.path.dirname(save_path)
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -55,14 +55,14 @@ def benchmarkTraining(Name):
 
 if __name__ == '__main__':
     # Lasso, LightGBM, MLP as benchmarks
-    with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
-        NamesDict = pickle.load(f)
-    Names = NamesDict['more_than_5years']+['price']
-    # print(Names)
-    rmse_l,mae_l = [],[]
-    for Name in Names:
-        print(Name)
-        Y_test_lasso,best_params = benchmarkTraining(Name)
+    # with open('./02-electricity-data/XYtables/NamesDict.pkl','rb') as f:
+    #     NamesDict = pickle.load(f)
+    # Names = NamesDict['more_than_5years']+['price']
+    # # print(Names)
+    # rmse_l,mae_l = [],[]
+    # for Name in Names:
+    #     print(Name)
+        # Y_test_lasso,best_params = benchmarkTraining(Name)
         # get persistence and skill scores
         # persi_df = calPersistence(Name)
         # persi_df.to_csv(f'./03-benchmarkResults/{Name}/NoText/persi_df.csv')
@@ -75,15 +75,15 @@ if __name__ == '__main__':
         # rmse_l.append(RMSE)
         # mae_l.append(MAE)
     
-    eval_df = pd.DataFrame()
-    eval_df['Locations'] = Names
-    eval_df['persistence_rmse'],eval_df['persistence_mae'] = rmse_l,mae_l
-    eval_df.to_csv('./03-benchmarkResults/results_rmse.csv',index=False)
+    # eval_df = pd.DataFrame()
+    # eval_df['Locations'] = Names
+    # eval_df['persistence_rmse'],eval_df['persistence_mae'] = rmse_l,mae_l
+    # eval_df.to_csv('./03-benchmarkResults/results_rmse.csv',index=False)
 
-    # Y_test_lasso,best_params = benchmarkTraining('price')
-    # print(best_params)
-    # eval_nation_recali = evaluate_deterministic(Y_test_lasso).mean()
-    # print(eval_nation_recali)
+    Y_test_lasso,best_params = benchmarkTraining('price')
+    print(best_params)
+    eval_nation_recali = evaluate_deterministic(Y_test_lasso).mean()
+    print(eval_nation_recali)
     # eval_benchmark_df = eval_benchmarks('03-benchmarkResults')
     # # eval_benchmark_df.to_csv('03-benchmarkResults/results_rmse_mae.csv')
     

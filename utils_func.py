@@ -438,12 +438,12 @@ def trainLasso(Name,res_dict,ifRecalibrate,ifEcoData):
     # load data   
     X_train, X_test, Y_train, Y_test = res_dict['data']
     scaler_x,scaler_y = res_dict['scalers']
-    # # to predict the prices in 2021,2022,2023
-    # X_train_p = X_train[X_train.index<'2022-01-01']
-    # X_test_p = X_train[(X_train.index>='2022-01-01')&(X_train.index<'2023-01-01')]
-    # Y_train_p = Y_train[Y_train.index<'2022-01-01']
-    # Y_test_p = Y_train[(Y_train.index>='2022-01-01')&(Y_train.index<'2023-01-01')]
-    # X_train, X_test, Y_train, Y_test = X_train_p, X_test_p, Y_train_p, Y_test_p
+    # to predict the prices in 2021,2022,2023
+    X_train_p = X_train[X_train.index<'2021-01-01']
+    X_test_p = X_train[(X_train.index>='2021-01-01')&(X_train.index<'2022-01-01')]
+    Y_train_p = Y_train[Y_train.index<'2021-01-01']
+    Y_test_p = Y_train[(Y_train.index>='2021-01-01')&(Y_train.index<'2022-01-01')]
+    X_train, X_test, Y_train, Y_test = X_train_p, X_test_p, Y_train_p, Y_test_p
 
     # if X_train.shape[0] > 365*3:
     #     X_train = X_train.iloc[-365*3:,:]

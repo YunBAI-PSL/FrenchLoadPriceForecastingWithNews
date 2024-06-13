@@ -3,7 +3,7 @@
 # The job partition (maximum elapsed time of the job).
 
 #SBATCH --time=3-00:00:00
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 
 # The name of the job.
