@@ -288,15 +288,15 @@ def rolling_train_price(Name,X_train,Y_train,X_test,Y_test,best_model,scaler_x,s
     X_train_new = X_train.copy()
     Y_train_new = Y_train.copy()
     X_test_new = X_test.copy()
-    Y_test_new = Y_test.copy()  
+    Y_test_new = Y_test.copy()
     
     all_predictions = []  # List to store all predictions
     sunday_indexes = X_test_new.resample('W-SUN').last().index
     # sunday_indexes = X_test_new.resample('M').last().index
     params_dict = dict()
 
+    for sunday_index in list(Y_test_new.index):
     # for sunday_index in sunday_indexes:
-    for sunday_index in list(X_test_new.index):
         t3 = time.time()
         print('*'*10)
         print(sunday_index)
@@ -323,15 +323,14 @@ def rolling_train_price(Name,X_train,Y_train,X_test,Y_test,best_model,scaler_x,s
         # Add data until next Sunday to training set
         if Name != 'price':
             try:
-                X_train_new = pd.concat([X_train_new.iloc[-365*3:], X_test_new.loc[:sunday_index]])
-                Y_train_new = pd.concat([Y_train_new.iloc[-365*3:], Y_test_new.loc[:sunday_index]])
+                X_train_new = pd.concat([X_train_new.iloc[-(365*3):], X_test_new.loc[:sunday_index]])
+                Y_train_new = pd.concat([Y_train_new.iloc[-(365*3):], Y_test_new.loc[:sunday_index]])
             except:
                 X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
                 Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
         else:
             X_train_new = pd.concat([X_train_new, X_test_new.loc[:sunday_index]])
             Y_train_new = pd.concat([Y_train_new, Y_test_new.loc[:sunday_index]])
-                
         # Remove data until next Sunday from test set
         if X_test_new.loc[sunday_index + pd.Timedelta(days=1):].shape[0] == 0:
             break
@@ -443,6 +442,10 @@ def trainLasso(Name,res_dict,ifRecalibrate,ifEcoData):
     X_test_p = X_train[(X_train.index>='2021-01-01')&(X_train.index<'2022-01-01')]
     Y_train_p = Y_train[Y_train.index<'2021-01-01']
     Y_test_p = Y_train[(Y_train.index>='2021-01-01')&(Y_train.index<'2022-01-01')]
+    # inverse transform Y_test
+    idxY,colsY = Y_test_p.index,Y_test_p.columns
+    Y_test_p = scaler_y.inverse_transform(Y_test_p)
+    Y_test_p = pd.DataFrame(Y_test_p,index=idxY,columns=colsY)
     X_train, X_test, Y_train, Y_test = X_train_p, X_test_p, Y_train_p, Y_test_p
 
     # if X_train.shape[0] > 365*3:

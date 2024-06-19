@@ -23,11 +23,11 @@ def benchmarkTraining(Name):
     ifRecalibrate = True
     print(ifRecalibrate)
 
-    ifEcoData = False
+    ifEcoData = True
     print(ifEcoData)
     # train the benchmark models
     t1 = time.time()
-    Y_test_lasso,best_params = trainLasso(Name, res_dict,ifRecalibrate,ifEcoData)
+    Y_test_lasso,best_params = trainLasso(Name,res_dict,ifRecalibrate,ifEcoData)
     # Y_test_lgb,param_lgb = trainLGB(res_dict,ifRecalibrate)
     # Y_test_mlp,param_mlp = trainMLP(res_dict,ifRecalibrate)
     # Y_test_etr,param_etr = trainETR(res_dict,ifRecalibrate)
@@ -41,7 +41,7 @@ def benchmarkTraining(Name):
     print(t2-t1)
 
     # save the results dict
-    save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso_test_2021_day_all_data.pkl'
+    save_path = f'./03-benchmarkResults/{Name}/NoText/recalibrate_lasso_2021_day_Eco.pkl'
     directory = os.path.dirname(save_path)
     if not os.path.exists(directory):
         os.makedirs(directory)
